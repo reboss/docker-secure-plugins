@@ -1,0 +1,14 @@
+{
+  "Description": "Authorization plugin to prevent apparmor and seccomp from being set to anything other than the default provided by Docker",
+  "Documentation": "https://github.com/reboss/docker-secure-plugins/docker-shield/README.md",
+  "Entrypoint": [
+    "/bin/docker-shield"
+  ],
+ 
+  "Interface": {
+    "Socket": "docker-shield.sock",
+    "Types": [
+      "docker.authz/1.0"
+    ]
+  }
+}
