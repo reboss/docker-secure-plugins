@@ -2,7 +2,6 @@ package main
 
 import (
     "bytes"
-    "fmt"
     "strings"
     "net/url"
     "regexp"
@@ -18,11 +17,26 @@ func NewDockerShield() (*DockerShield) {
     return &DockerShield{}
 }
 
-// TODO: We can just use the interface provided by authorization
+// Implements authorization.Plugin interface
 type DockerShield struct {}
 
 type configWrapper struct {
     HostConfig *container.HostConfig
+}
+
+type execWrapper struct {
+    Privileged bool
+}
+
+func validateSecOpts(body *configWrapper) bool {
+    for _, secopt := range body.HostConfig.SecurityOpt {
+        apparmor := strings.Contains(secopt, "apparmor")
+        seccomp := strings.Contains(secopt, "seccomp")
+        if apparmor || seccomp {
+            return false
+        }
+    }
+    return true
 }
 
 func (p *DockerShield) AuthZReq(req authorization.Request) authorization.Response {
@@ -32,27 +46,38 @@ func (p *DockerShield) AuthZReq(req authorization.Request) authorization.Respons
         return authorization.Response{Err: err.Error()}
     }
 
-    // TODO: Need to prevent --privileged option when running `docker exec`
-    if req.RequestMethod == "POST" && req.RequestBody != nil && createAPI.MatchString(uri) {
-        body := &configWrapper{}
-        if err := json.NewDecoder(bytes.NewReader(req.RequestBody)).Decode(body); err != nil {
-            return authorization.Response{Err: err.Error()}
-        }
+    if req.RequestMethod == "POST" && req.RequestBody != nil {
 
-        // Reject privileged containers
-        if body.HostConfig.Privileged {
-            return authorization.Response{Msg: "Privileged containers not allowed"}
-        }
+        if createAPI.MatchString(uri) {
+            body := &configWrapper{}
 
-        // Reject custom apparmor or seccomp
-        if body.HostConfig.SecurityOpt != nil {
-            for _, secopt := range body.HostConfig.SecurityOpt {
-                apparmor := strings.Contains(secopt, "apparmor")
-                seccomp := strings.Contains(secopt, "seccomp")
-                if apparmor || seccomp {
-                    return authorization.Response{Msg: "Not allowed to modify security options"}
-               }
+            if err := json.NewDecoder(bytes.NewReader(req.RequestBody)).Decode(body); err != nil {
+                return authorization.Response{Err: err.Error()}
             }
+
+            // Reject custom apparmor or seccomp
+            if body.HostConfig.SecurityOpt != nil && !validateSecOpts(body) {
+                return authorization.Response{Msg: "Not allowed to modify security options"}
+            }
+
+            // Reject privileged containers
+            if body.HostConfig.Privileged {
+                return authorization.Response{Msg: "Privileged containers not allowed"}
+            }
+        }
+
+        else if execAPI.MatchString(uri) {
+            body := &execWrapper{}
+
+            if err := json.NewDecoder(bytes.NewReader(req.RequestBody)).Decode(body); err != nil {
+                return authorization.Response{Err: err.Error()}
+            }
+
+            // Reject execing into containers in privleged mode
+            if body.Privileged {
+                return authorization.Response{Msg: "Privileged containers not allowed"}
+            }
+
         }
     }
     return authorization.Response{Allow: true}
